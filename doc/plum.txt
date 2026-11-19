@@ -1,0 +1,175 @@
+*plum.txt*  Chubby git clones with a pin: a small plugin manager
+
+                          PLUM  REFERENCE MANUAL
+
+==============================================================================
+CONTENTS                                                        *plum-contents*
+
+    1. Introduction ............................ |plum-introduction|
+    2. Requirements ............................ |plum-requirements|
+    3. The plugin list ......................... |plum-list|
+    4. Commands ................................ |plum-commands|
+    5. Pinning ................................. |plum-pins|
+    6. Batch use from the shell ................ |plum-shell|
+    7. Options ................................. |plum-options|
+    8. Limitations ............................. |plum-limitations|
+
+==============================================================================
+1. INTRODUCTION                                             *plum-introduction*
+
+Plum manages plugins as full git clones below a package directory. Vim loads
+every directory under pack/*/start/ at startup (see |packages|), so the
+manager does not load anything itself. It wraps the git operations around
+that mechanism: cloning, updating, pinning and removing. The list of plugins
+is a script file, by default ~/.vimplugins, which is sourced at startup. The
+|.vimrc| does not need any lines for plum.
+
+The manager is installed like any other package: >
+    git clone https://github.com/sevehub/vim9-plum ~/.vim/pack/plum/start/plum
+<
+On Windows the directory is ~/vimfiles/pack/plum/start/plum.
+
+==============================================================================
+2. REQUIREMENTS                                             *plum-requirements*
+
+Vim 9.0 or later and git are required. Neovim is not supported, because it
+does not implement |vim9script|. Batch use requires the console version of
+Vim.
+
+==============================================================================
+3. THE PLUGIN LIST                                                 *plum-list*
+
+The list file must set |g:plum_plugins| to a List. It can be written in
+|vim9script|: >
+    vim9script
+    g:plum_plugins = [
+      {url: 'tpope/vim-surround'},
+      {url: 'junegunn/fzf.vim', commit: 'a1b2c3d4e5f6'},
+      {url: 'sevehub/vimhud'},
+    ]
+<
+or in legacy script with "let g:plum_plugins = [...]". The file must not
+start with a byte order mark.
+
+                                                              *g:plum_plugins*
+g:plum_plugins         List of Strings or Dictionaries
+                        An entry is a String, which is the short form of
+                        {url: String}, or a Dictionary with these keys:
+
+                        url     "user/repo" for GitHub, or any URL or path
+                                understood by "git clone".
+                        commit  Optional. A commit hash, tag or branch to
+                                which the plugin is checked out, see
+                                |plum-pins|.
+                        name    Optional. The name of the directory. The
+                                default is the last part of the URL.
+
+Invalid entries and duplicate names are reported and ignored. The list is
+read again before every command, so changes take effect without restarting
+Vim.
+
+==============================================================================
+4. COMMANDS                                                     *plum-commands*
+
+                                                                *:PlumInstall*
+:PlumInstall[!]        Clone every plugin that is missing. Pinned plugins
+                        that exist are fetched and checked out at their
+                        commit, which also applies a changed pin. Without !
+                        the work runs in the background, progress is shown
+                        in a popup window, and the popup is closed with q or
+                        <Esc>. With ! the command blocks until all plugins
+                        are finished and opens no popup.
+
+                                                                 *:PlumUpdate*
+:PlumUpdate[!]         Run "git pull --ff-only" for every unpinned plugin.
+                        Pinned plugins are skipped. The ! argument has the
+                        same meaning as for |:PlumInstall|.
+
+                                                                  *:PlumClean*
+:PlumClean[!]          Remove directories below |g:plum_root| that are not
+                        in the list, after a confirmation. The directory
+                        named "plum" is never removed. With ! no
+                        confirmation is asked. The command refuses to run
+                        when the list is empty or could not be loaded.
+
+                                                                   *:PlumList*
+:PlumList              Show each plugin as installed or missing, and as
+                        tracking its upstream or pinned.
+
+                                                                    *:PlumPin*
+:PlumPin {name}        Print the current commit of the installed plugin
+                        {name} as a list entry, and copy the line to the
+                        unnamed register, see |plum-pins|.
+
+                                                                   *:PlumQuit*
+:PlumQuit              Exit Vim with status 1 when the last run had
+                        failures, and with status 0 otherwise. This is
+                        intended for batch use, see |plum-shell|.
+
+Up to |g:plum_jobs| git processes run in parallel. Help tags are generated
+for every plugin that was cloned or updated, and new plugins are loaded at
+the next start of Vim.
+
+==============================================================================
+5. PINNING                                                          *plum-pins*
+
+A pin turns a plugin into a fixed snapshot. To pin the installed plugin
+vim-surround, run >
+    :PlumPin vim-surround
+<
+and paste the printed line over the old entry in the list file. From then on
+|:PlumUpdate| skips the plugin, and |:PlumInstall| fetches and checks out
+the commit, which also applies a changed pin.
+
+Removing the "commit" key makes the plugin follow its upstream again. A
+pinned plugin is in the state of a detached HEAD, and "git switch -" inside
+the plugin directory returns it to its branch before the next update.
+Full clones are used, because a pin to an arbitrary commit requires the
+history to be present.
+
+==============================================================================
+6. BATCH USE FROM THE SHELL                                        *plum-shell*
+
+The manager can be driven without an interface. Bash: >
+    vim -es -N -u NONE -c 'packloadall' -c 'PlumInstall!' -c 'PlumQuit'
+<
+PowerShell: >
+    vim -es -N -u NONE -c "packloadall" -c "PlumInstall!" -c "PlumQuit"
+<
+The exit status is 0 when every plugin succeeded and 1 otherwise. The option
+-u NONE skips the |.vimrc|, so options set there are not seen; replace it
+with -u ~/.vimrc when |g:plum_root| or |g:plum_file| is configured. Vim may
+print nothing in batch mode. Adding -V1 usually makes the messages visible.
+
+==============================================================================
+7. OPTIONS                                                      *plum-options*
+
+                                                                 *g:plum_file*
+g:plum_file            String (default '~/.vimplugins')
+                        The location of the plugin list.
+
+                                                                 *g:plum_root*
+g:plum_root            String (default '~/.vim/pack/plum/start')
+                        The directory for the clones. On Windows the default
+                        is '~/vimfiles/pack/plum/start'.
+
+                                                                 *g:plum_jobs*
+g:plum_jobs            Number (default 4)
+                        The number of git processes that run in parallel.
+
+==============================================================================
+8. LIMITATIONS                                               *plum-limitations*
+
+A removed pin leaves the plugin in a detached HEAD until "git switch -" is
+run, and |:PlumUpdate| reports a failure for it in the meantime.
+
+Only the directory given by |g:plum_root| is managed, so plugins that should
+load on demand through |:packadd| are not supported.
+
+The shorthand "user/repo" always means GitHub. A relative local path with
+exactly one slash has to be written with a leading "./".
+
+Submodules inside a plugin are not initialized.
+
+==============================================================================
+ vim:tw=78:ts=8:ft=help:norl:
