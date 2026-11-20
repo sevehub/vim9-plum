@@ -19,6 +19,7 @@ var failed = 0
 var sync_mode = false
 var popup_id = 0
 var run_title = ''
+var self_updated = false
 
 # ------------------------------------------------------------------ helpers
 
@@ -39,7 +40,7 @@ enddef
 
 def Root(): string
   const custom: string = Opt('root', '')
-  const base = custom != '' ? custom : (has('win32') ? '~/vimfiles' : '~/.vim') .. '/pack/plum/start'
+  const base = custom != '' ? custom : (has('win32') ? '~/vimfiles' : '~/.vim') .. '/pack/plum/opt'
   return tr(expand(base), '\', '/')
 enddef
 
@@ -84,12 +85,24 @@ def Normalize(item: any): dict<any>
     return {}
   endif
 
+  var fts: list<string> = []
+  const f = get(spec, 'ft', [])
+  if type(f) == v:t_string
+    fts = [f]
+  elseif type(f) == v:t_list
+    fts = filter(copy(f), (_, x) => type(x) == v:t_string)
+  endif
+  if !empty(filter(copy(fts), (_, x) => x !~# '^[A-Za-z0-9_.-]\+$'))
+    return {}
+  endif
+
   const github = url =~# '^[A-Za-z0-9_.-]\+/[A-Za-z0-9_.-]\+$'
   return {
     name: name,
     spec: url,
     url: github ? 'https://github.com/' .. url : url,
     commit: commit,
+    ft: fts,
     dir: Root() .. '/' .. name,
   }
 enddef
@@ -132,6 +145,49 @@ export def Check()
   if !empty(missing)
     Warn($'{len(missing)} plugin(s) not installed, run :PlumInstall')
   endif
+enddef
+
+def LoadNow(name: string)
+  try
+    execute 'packadd' fnameescape(name)
+  catch
+    Warn($'cannot load {name}: {v:exception}')
+  endtry
+enddef
+
+# Loads a plugin on the first matching FileType event. The loaders for
+# filetype plugins, indent and syntax already ran for the current buffer
+# before the plugin was on the runtimepath, so they are run again.
+def LoadForFiletype(name: string)
+  LoadNow(name)
+  unlet! b:did_ftplugin b:did_indent
+  for group in ['filetypeplugin', 'filetypeindent', 'syntaxset']
+    if exists($'#{group}#FileType')
+      execute $'silent! doautocmd <nomodeline> {group} FileType'
+    endif
+  endfor
+enddef
+
+# Loads every installed plugin in list order, except plugins with an ft key,
+# which are loaded when a buffer of that filetype appears. This runs at startup, after the
+# list file has been sourced, so variables set in that file are visible when
+# the plugin scripts run.
+export def Activate()
+  augroup PlumFiletype
+    autocmd!
+  augroup END
+  for p in plugins
+    if !isdirectory(p.dir)
+      continue
+    endif
+    if empty(p.ft)
+      LoadNow(p.name)
+    else
+      augroup PlumFiletype
+        execute $'autocmd FileType {join(p.ft, ",")} ++once LoadForFiletype({string(p.name)})'
+      augroup END
+    endif
+  endfor
 enddef
 
 export def Names(): list<string>
@@ -206,10 +262,52 @@ enddef
 
 # ------------------------------------------------------------------- engine
 
+# Reads the commit that HEAD points to without starting a process.
+def ReadHead(dir: string): string
+  const head = dir .. '/.git/HEAD'
+  if !filereadable(head)
+    return ''
+  endif
+  const first = readfile(head, '', 1)
+  if empty(first)
+    return ''
+  endif
+  if first[0] !~# '^ref: '
+    return first[0]
+  endif
+  const ref = first[0][5 :]
+  const loose = dir .. '/.git/' .. ref
+  if filereadable(loose)
+    const l = readfile(loose, '', 1)
+    return empty(l) ? '' : l[0]
+  endif
+  const packed = dir .. '/.git/packed-refs'
+  if filereadable(packed)
+    for line in readfile(packed)
+      const m = matchlist(line, '^\(\x\+\) \(.*\)$')
+      if !empty(m) && m[2] == ref
+        return m[1]
+      endif
+    endfor
+  endif
+  return ''
+enddef
+
+# Pseudo plugin that stands for the manager itself.
+def SelfEntry(): dict<any>
+  return {name: 'plum (self)', spec: '', url: '', commit: '', ft: [], dir: SELF_DIR, self: true}
+enddef
+
 def MakeTask(p: dict<any>, action: string): dict<any>
   var steps: list<list<string>> = []
   var msg = ''
-  if !isdirectory(p.dir)
+  if get(p, 'self', false)
+    if isdirectory(p.dir .. '/.git')
+      steps->add(['git', '-C', p.dir, 'pull', '--ff-only', '--quiet'])
+    else
+      msg = 'not a git clone'
+    endif
+  elseif !isdirectory(p.dir)
     steps->add(['git', 'clone', '--quiet', '--', p.url, p.dir])
     if p.commit != ''
       steps->add(['git', '-C', p.dir, 'checkout', '--quiet', p.commit, '--'])
@@ -234,6 +332,7 @@ def MakeTask(p: dict<any>, action: string): dict<any>
     msg: msg,
     err: [],
     job: v:null,
+    before: get(p, 'self', false) ? ReadHead(p.dir) : '',
   }
 enddef
 
@@ -262,6 +361,9 @@ def Finish()
     endfor
   endif
   echomsg $'plum: {nok} done, {nskip} unchanged, {failed} failed'
+  if self_updated
+    echomsg 'plum: Plum itself was updated, restart Vim to use the new version'
+  endif
 enddef
 
 def StepDone(t: dict<any>, status: number)
@@ -274,6 +376,15 @@ def StepDone(t: dict<any>, status: number)
     t.state = 'pending'
   else
     t.state = 'ok'
+    if get(t.p, 'self', false)
+      const after = ReadHead(t.p.dir)
+      if t.before != '' && after != '' && after != t.before
+        t.msg = $'{t.before[0 : 6]} -> {after[0 : 6]}, restart Vim'
+        self_updated = true
+      else
+        t.msg = 'up to date'
+      endif
+    endif
   endif
   Pump()
 enddef
@@ -319,7 +430,7 @@ def Begin(action: string, sync: bool)
     return
   endif
   Load()
-  if empty(plugins)
+  if action != 'self' && empty(plugins)
     Warn($'no plugins found, check {Opt("file", "~/.vimplugins")} and g:plum_plugins')
     return
   endif
@@ -327,8 +438,18 @@ def Begin(action: string, sync: bool)
     Warn('git was not found in the path')
     return
   endif
-  mkdir(Root(), 'p')
-  tasks = plugins->mapnew((_, p) => MakeTask(p, action))
+  var list: list<dict<any>> = []
+  if action == 'self'
+    list = [MakeTask(SelfEntry(), 'update')]
+  else
+    mkdir(Root(), 'p')
+    if action == 'update' && Opt('self_update', 1) != 0
+      list->add(MakeTask(SelfEntry(), 'update'))
+    endif
+    list->extend(plugins->mapnew((_, p) => MakeTask(p, action)))
+  endif
+  tasks = list
+  self_updated = false
   failed = 0
   sync_mode = sync
   run_title = 'Plum ' .. action
@@ -357,6 +478,10 @@ enddef
 
 export def Update(sync: bool)
   Begin('update', sync)
+enddef
+
+export def SelfUpdate(sync: bool)
+  Begin('self', sync)
 enddef
 
 export def Clean(force: bool)
@@ -401,7 +526,8 @@ export def List()
   for p in plugins
     const state = isdirectory(p.dir) ? 'installed' : 'missing'
     const pin = p.commit == '' ? 'tracking' : 'pin ' .. p.commit[0 : 11]
-    echo printf('%-26s %-10s %s', p.name, state, pin)
+    const on = empty(p.ft) ? '' : 'ft=' .. join(p.ft, ',')
+    echo printf('%-26s %-10s %-20s %s', p.name, state, pin, on)
   endfor
 enddef
 
@@ -410,7 +536,8 @@ def PinDone(p: dict<any>, out: list<string>)
     Warn($'could not read the commit of {p.name}')
     return
   endif
-  const line = "{url: '" .. p.spec .. "', commit: '" .. out[0] .. "'},"
+  const on = empty(p.ft) ? '' : ', ft: ' .. string(p.ft)
+  const line = "{url: '" .. p.spec .. "', commit: '" .. out[0] .. "'" .. on .. "},"
   setreg('"', line)
   echomsg 'plum: ' .. line .. '  (copied to the unnamed register)'
 enddef

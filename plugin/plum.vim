@@ -15,12 +15,14 @@ enddef
 
 command! -bang -bar PlumInstall plum.Install(<bang>0)
 command! -bang -bar PlumUpdate plum.Update(<bang>0)
+command! -bang -bar PlumSelfUpdate plum.SelfUpdate(<bang>0)
 command! -bang -bar PlumClean plum.Clean(<bang>0)
 command! -bang -bar PlumList plum.List()
 command! -nargs=1 -complete=customlist,g:PlumComplete PlumPin plum.Pin(<q-args>)
 command! -bar PlumQuit plum.Quit()
 
 plum.Load()
+plum.Activate()
 
 augroup Plum
   autocmd!

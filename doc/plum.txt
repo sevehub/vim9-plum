@@ -1,4 +1,4 @@
-*plum.txt*  Chubby git clones with a pin: a small plugin manager
+*plum.txt*  Git clones with a pin: a small plugin manager
 
                           PLUM  REFERENCE MANUAL
 
@@ -17,12 +17,12 @@ CONTENTS                                                        *plum-contents*
 ==============================================================================
 1. INTRODUCTION                                             *plum-introduction*
 
-Plum manages plugins as full git clones below a package directory. Vim loads
-every directory under pack/*/start/ at startup (see |packages|), so the
-manager does not load anything itself. It wraps the git operations around
-that mechanism: cloning, updating, pinning and removing. The list of plugins
-is a script file, by default ~/.vimplugins, which is sourced at startup. The
-|.vimrc| does not need any lines for plum.
+Plum manages plugins as full git clones below a package directory (see
+|packages|). It wraps the git operations around that mechanism: cloning,
+updating, pinning and removing. The list of plugins is a script file, by
+default ~/.vimplugins, which is sourced at startup and also holds the
+variables of the plugins. The |.vimrc| does not need any lines for plum or
+for the plugins.
 
 The manager is installed like any other package: >
     git clone https://github.com/sevehub/vim9-plum ~/.vim/pack/plum/start/plum
@@ -63,10 +63,48 @@ g:plum_plugins         List of Strings or Dictionaries
                                 |plum-pins|.
                         name    Optional. The name of the directory. The
                                 default is the last part of the URL.
+                        ft      Optional. A filetype or a List of filetypes.
+                                The plugin is loaded only when a buffer of
+                                one of these types appears, see
+                                |plum-filetype|.
 
 Invalid entries and duplicate names are reported and ignored. The list is
 read again before every command, so changes take effect without restarting
 Vim.
+
+                                                               *plum-variables*
+The list file can also hold the variables of the plugins, which keeps the
+|.vimrc| free of plugin settings: >
+    vim9script
+    g:vimhud_keybox_timeout = 3000
+    g:plum_plugins = [
+      {url: 'sevehub/vimhud'},
+    ]
+<
+Plum sources the file first and then loads the plugins with |:packadd|, in
+list order, so the variables are set when the plugin scripts run. This is the
+reason why the clones live in pack/plum/opt and not in pack/plum/start,
+because plugins in start directories can be loaded before the list file has
+been sourced. Only |g:plum_file| has to be set in the |.vimrc|.
+
+                                                               *plum-filetype*
+A plugin with the "ft" key is not loaded at startup: >
+    g:plum_plugins = [
+      {url: 'vim-python/python-syntax', ft: 'python'},
+      {url: 'user/c-helpers', ft: ['c', 'cpp']},
+    ]
+<
+Plum registers a |FileType| autocommand that fires once. It adds the plugin
+with |:packadd| and then runs the loaders of filetype plugins, indent and
+syntax again for the current buffer, because they ran before the plugin was
+on the 'runtimepath'. The b:did_ftplugin and b:did_indent variables are
+removed first, so that the plugin files are not skipped.
+
+A plugin that ships its own filetype detection (an ftdetect directory) must
+not use "ft", because the detection has to be active before any file is
+opened. Commands defined in the plugin directory of the plugin are not
+available until the first matching buffer has been loaded. |:PlumList| shows
+the filetypes of each plugin.
 
 ==============================================================================
 4. COMMANDS                                                     *plum-commands*
@@ -82,8 +120,19 @@ Vim.
 
                                                                  *:PlumUpdate*
 :PlumUpdate[!]         Run "git pull --ff-only" for every unpinned plugin.
-                        Pinned plugins are skipped. The ! argument has the
-                        same meaning as for |:PlumInstall|.
+                        Pinned plugins are skipped. Plum itself is updated
+                        first, unless |g:plum_self_update| is 0. The !
+                        argument has the same meaning as for
+                        |:PlumInstall|.
+
+                                                             *:PlumSelfUpdate*
+:PlumSelfUpdate[!]      Run "git pull --ff-only" in the directory of Plum
+                        itself. When new commits arrive, the old and the
+                        new commit are shown, and Vim has to be restarted
+                        to use the new version. Plum must be a git clone,
+                        otherwise the command reports that it is not. The
+                        ! argument has the same meaning as for
+                        |:PlumInstall|.
 
                                                                   *:PlumClean*
 :PlumClean[!]          Remove directories below |g:plum_root| that are not
@@ -149,13 +198,19 @@ g:plum_file            String (default '~/.vimplugins')
                         The location of the plugin list.
 
                                                                  *g:plum_root*
-g:plum_root            String (default '~/.vim/pack/plum/start')
+g:plum_root            String (default '~/.vim/pack/plum/opt')
                         The directory for the clones. On Windows the default
-                        is '~/vimfiles/pack/plum/start'.
+                        is '~/vimfiles/pack/plum/opt'. It has to be a
+                        pack/*/opt directory inside 'packpath'.
 
                                                                  *g:plum_jobs*
 g:plum_jobs            Number (default 4)
                         The number of git processes that run in parallel.
+
+                                                          *g:plum_self_update*
+g:plum_self_update      Number (default 1)
+                        When 0, |:PlumUpdate| does not update Plum itself.
+                        Use this for a development checkout of Plum.
 
 ==============================================================================
 8. LIMITATIONS                                               *plum-limitations*
@@ -163,8 +218,11 @@ g:plum_jobs            Number (default 4)
 A removed pin leaves the plugin in a detached HEAD until "git switch -" is
 run, and |:PlumUpdate| reports a failure for it in the meantime.
 
-Only the directory given by |g:plum_root| is managed, so plugins that should
-load on demand through |:packadd| are not supported.
+Only the directory given by |g:plum_root| is managed. Plugins are loaded at
+startup or on a filetype, but not on a command or a key mapping. Running the
+filetype loaders again for the current buffer can source a runtime ftplugin a
+second time, which can duplicate buffer-local mappings in scripts that do not
+guard against repetition.
 
 The shorthand "user/repo" always means GitHub. A relative local path with
 exactly one slash has to be written with a leading "./".
