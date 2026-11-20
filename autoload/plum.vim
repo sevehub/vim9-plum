@@ -90,13 +90,21 @@ def Normalize(item: any): dict<any>
   if type(f) == v:t_string
     fts = [f]
   elseif type(f) == v:t_list
-    fts = filter(copy(f), (_, x) => type(x) == v:t_string)
-  endif
-  if !empty(filter(copy(fts), (_, x) => x !~# '^[A-Za-z0-9_.-]\+$'))
-    return {}
+    for x in f
+        if type(x) != v:t_string
+            return {}
+        endif 
+        fts->add(x)
+        endfor
   endif
 
-  const github = url =~# '^[A-Za-z0-9_.-]\+/[A-Za-z0-9_.-]\+$'
+  for x in fts
+      if x !~# '^[-Za-z0-9_.-]\+$'
+          return {}
+      endif
+  endfor
+
+          const github = url =~# '^[A-Za-z0-9_.-]\+/[A-Za-z0-9_.-]\+$'
   return {
     name: name,
     spec: url,
