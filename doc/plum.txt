@@ -13,6 +13,7 @@ CONTENTS                                                        *plum-contents*
     6. Batch use from the shell ................ |plum-shell|
     7. Options ................................. |plum-options|
     8. Limitations ............................. |plum-limitations|
+    9. Data for dashboards ..................... |plum-stats|
 
 ==============================================================================
 1. INTRODUCTION                                             *plum-introduction*
@@ -228,6 +229,20 @@ The shorthand "user/repo" always means GitHub. A relative local path with
 exactly one slash has to be written with a leading "./".
 
 Submodules inside a plugin are not initialized.
+
+==============================================================================
+
+9. DATA FOR DASHBOARDS                                                                  *plum-stats*
+
+                                                                  *plum#Stats()*
+plum#Stats()            Return a dictionary for dashboards and status lines:
+                        "version" (the commit of Plum), "activate_ms" (the
+                        time of the activation at startup), "last_run"
+                        (action, ms, ok, skipped, failed and when of the last
+                        install or update, or an empty dictionary) and
+                        "plugins", a list with name, dir, installed, commit,
+                        ft, loaded and ms for every listed plugin. The load
+                        time ms is -1 until the plugin has been loaded.
 
 ==============================================================================
  vim:tw=78:ts=8:ft=help:norl:

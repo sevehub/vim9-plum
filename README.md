@@ -126,6 +126,10 @@ Plum is a git clone like the plugins it manages, so it can update itself. `:Plum
 
 Self update needs Plum to be a git clone, which is the case when it was installed with the commands of this README. A copy that was extracted from an archive is reported as not being a git clone and is skipped. A local checkout that is used for development should set `g:plum_self_update = 0`, so that `:PlumUpdate` does not pull into the working copy. A pull that cannot be fast-forwarded, for example after local edits, fails with the message of git and changes nothing.
 
+## Data for dashboards
+
+`plum#Stats()` returns plain data for dashboards and status lines: the commit of Plum itself, the time that the activation at startup took in milliseconds, the last install or update run with its duration and counts, and one entry for every listed plugin with its name, directory, pin, filetypes, whether it is installed and loaded, and its load time in milliseconds. The load time covers the `:packadd` of the plugin, and a plugin with an `ft` key is timed when its filetype first appears. [vim9pogo](https://github.com/sevehub/vim9pogo), a start page for Vim, shows this data.
+
 ## Pinning
 
 A pin turns the plugin into a fixed snapshot. The workflow is short: `:PlumPin vim-surround` prints `{url: 'tpope/vim-surround', commit: '...'},` and copies the line, which is then pasted over the old entry in `~/.vimplugins`. Afterwards `:PlumUpdate` skips the plugin, and `:PlumInstall` fetches and checks out the commit, which also applies a changed pin. Removing the `commit` key makes the plugin follow its upstream again, and `git switch -` inside the plugin directory returns it from the detached HEAD to its branch before the next update.

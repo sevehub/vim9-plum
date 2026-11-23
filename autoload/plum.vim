@@ -21,6 +21,11 @@ var popup_id = 0
 var run_title = ''
 var self_updated = false
 
+var load_ms: dict<float> = {}
+var loaded: dict<bool> = {}
+var activate_ms = 0.0
+var last_run: dict<any> = {}
+var run_t0: list<number> = []
 # ------------------------------------------------------------------ helpers
 
 def IsSelf(path: string): bool
@@ -156,11 +161,17 @@ export def Check()
 enddef
 
 def LoadNow(name: string)
-  try
-    execute 'packadd' fnameescape(name)
-  catch
-    Warn($'cannot load {name}: {v:exception}')
-  endtry
+    const t0 = reltime()
+
+    try
+        execute 'packadd' fnameescape(name)
+        loaded[name] = true
+
+    catch
+        Warn($'cannot load {name}: {v:exception}')
+    endtry
+    load_ms[name] = reltimefloat(reltime(t0)) * 1000
+
 enddef
 
 # Loads a plugin on the first matching FileType event. The loaders for
@@ -181,6 +192,7 @@ enddef
 # list file has been sourced, so variables set in that file are visible when
 # the plugin scripts run.
 export def Activate()
+  const t0 = reltime()
   augroup PlumFiletype
     autocmd!
   augroup END
@@ -196,7 +208,21 @@ export def Activate()
       augroup END
     endif
   endfor
+
+  activate_ms = reltimefloat(reltime(t0)) * 1000
 enddef
+
+# Plain data for dashboards and status lines: the state of every listed plugin
+# and the run times of the manager. Called as plum#Stats() from other scripts.
+export def Stats(): dict<any>
+  var rows: list<dict<any>> = []
+  for p in plugins
+    rows->add({name: p.name, dir: p.dir, installed: isdirectory(p.dir), commit: p.commit, ft: p.ft, loaded: get(loaded, p.name, false), ms: get(load_ms, p.name, -1.0)})
+  endfor
+  return {version: strpart(ReadHead(SELF_DIR), 0, 7), activate_ms: activate_ms, last_run: last_run, plugins: rows}
+enddef
+
+
 
 export def Names(): list<string>
   return plugins->mapnew((_, p) => p.name)
@@ -368,6 +394,7 @@ def Finish()
       endif
     endfor
   endif
+  last_run = {action: run_title[5 :], ms: reltimefloat(reltime(run_t0)) * 1000, ok: nok, skipped: nskip, failed: failed, when: localtime()}
   echomsg $'plum: {nok} done, {nskip} unchanged, {failed} failed'
   if self_updated
     echomsg 'plum: Plum itself was updated, restart Vim to use the new version'
@@ -461,6 +488,7 @@ def Begin(action: string, sync: bool)
   failed = 0
   sync_mode = sync
   run_title = 'Plum ' .. action
+  run_t0 = reltime()
   if !sync
     OpenPopup()
   endif
